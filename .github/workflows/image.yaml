@@ -1,0 +1,342 @@
+name: Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  REGISTRY: ghcr.io
+  GRYPE_VERSION: v0.116.0
+  SYFT_VERSION: v1.49.0
+
+jobs:
+  build-amd64:
+    name: Build and scan ${{ matrix.binary }} AMD64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - driver: ec2
+            binary: openshell-driver-ec2
+            containerfile: Containerfile.ec2
+          - driver: kubevirt
+            binary: openshell-driver-kubevirt
+            containerfile: Containerfile.kubevirt
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install verification tools
+        run: |
+          make install-proto-tools
+          make install-golangci-lint install-govulncheck
+
+      - name: Verify source before image build
+        run: |
+          make lint-go lint-golangci tidy-check proto-lint gen-check test-unit
+          make govulncheck
+
+      - name: Verify Markdown
+        uses: DavidAnson/markdownlint-cli2-action@6bf21b07787794f89a243495939cd651942aeabe # v24.1.0
+        with:
+          globs: |
+            README.md
+            docs/**/*.md
+
+      - name: Ensure Podman is available
+        run: |
+          if ! command -v podman; then
+            sudo apt-get update
+            sudo apt-get install --yes podman
+          fi
+          podman version
+
+      - name: Build native AMD64 OCI image
+        run: |
+          version="${GITHUB_SHA}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          podman build --platform linux/amd64 \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg VERSION="${version}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --file "${{ matrix.containerfile }}" \
+            --tag "localhost/${{ matrix.binary }}:build-amd64" .
+          test "$(podman run --rm localhost/${{ matrix.binary }}:build-amd64 --version)" = "${{ matrix.binary }} ${version}"
+          podman save --format oci-archive \
+            --output image-amd64.tar "localhost/${{ matrix.binary }}:build-amd64"
+
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
+
+      - name: Generate AMD64 SBOM
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: '"${SYFT}" scan oci-archive:image-amd64.tar --output spdx-json=sbom-amd64.spdx.json'
+
+      - name: Scan AMD64 image SBOM
+        id: scan
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: sbom-amd64.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+          output-file: scan-amd64.sarif
+          grype-version: ${{ env.GRYPE_VERSION }}
+
+      - name: Upload AMD64 scan results
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        if: >-
+          always() && steps.scan.outputs.sarif != '' &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: container-scan-${{ matrix.driver }}-amd64
+
+      - name: Upload scanned AMD64 OCI image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-${{ matrix.driver }}-amd64
+          path: |
+            image-amd64.tar
+            sbom-amd64.spdx.json
+          retention-days: 7
+
+  build-arm64:
+    name: Build and scan ${{ matrix.binary }} ARM64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - driver: ec2
+            binary: openshell-driver-ec2
+            containerfile: Containerfile.ec2
+          - driver: kubevirt
+            binary: openshell-driver-kubevirt
+            containerfile: Containerfile.kubevirt
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install verification tools
+        run: |
+          make install-proto-tools
+          make install-golangci-lint
+
+      - name: Verify source before image build
+        run: make lint-go lint-golangci tidy-check proto-lint gen-check test-unit
+
+      - name: Verify Markdown
+        uses: DavidAnson/markdownlint-cli2-action@6bf21b07787794f89a243495939cd651942aeabe # v24.1.0
+        with:
+          globs: |
+            README.md
+            docs/**/*.md
+
+      - name: Ensure Podman is available
+        run: |
+          if ! command -v podman; then
+            sudo apt-get update
+            sudo apt-get install --yes podman
+          fi
+          podman version
+
+      - name: Build native ARM64 OCI image
+        run: |
+          version="${GITHUB_SHA}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          podman build --platform linux/arm64 \
+            --build-arg TARGETARCH=arm64 \
+            --build-arg VERSION="${version}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --file "${{ matrix.containerfile }}" \
+            --tag "localhost/${{ matrix.binary }}:build-arm64" .
+          test "$(podman run --rm localhost/${{ matrix.binary }}:build-arm64 --version)" = "${{ matrix.binary }} ${version}"
+          podman save --format oci-archive \
+            --output image-arm64.tar "localhost/${{ matrix.binary }}:build-arm64"
+
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: ${{ env.SYFT_VERSION }}
+
+      - name: Generate ARM64 SBOM
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: '"${SYFT}" scan oci-archive:image-arm64.tar --output spdx-json=sbom-arm64.spdx.json'
+
+      - name: Scan ARM64 image SBOM
+        id: scan
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          sbom: sbom-arm64.spdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+          output-file: scan-arm64.sarif
+          grype-version: ${{ env.GRYPE_VERSION }}
+
+      - name: Upload ARM64 scan results
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        if: >-
+          always() && steps.scan.outputs.sarif != '' &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: container-scan-${{ matrix.driver }}-arm64
+
+      - name: Upload scanned ARM64 OCI image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-${{ matrix.driver }}-arm64
+          path: |
+            image-arm64.tar
+            sbom-arm64.spdx.json
+          retention-days: 7
+
+  manifest:
+    name: Publish ${{ matrix.binary }} multi-architecture manifest
+    if: github.event_name != 'pull_request'
+    needs: [build-amd64, build-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - driver: ec2
+            binary: openshell-driver-ec2
+          - driver: kubevirt
+            binary: openshell-driver-kubevirt
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        run: |
+          [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: image-${{ matrix.driver }}-amd64
+          path: artifacts/amd64
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: image-${{ matrix.driver }}-arm64
+          path: artifacts/arm64
+
+      - name: Ensure Podman is available
+        run: |
+          if ! command -v podman; then
+            sudo apt-get update
+            sudo apt-get install --yes podman
+          fi
+          podman version
+
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "${GH_TOKEN}" | podman login "${REGISTRY}" --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Publish architecture images and manifest
+        id: publish
+        run: |
+          image="${REGISTRY}/${GITHUB_REPOSITORY,,}/${{ matrix.binary }}"
+          podman load --input artifacts/amd64/image-amd64.tar
+          podman load --input artifacts/arm64/image-arm64.tar
+
+          podman push "localhost/${{ matrix.binary }}:build-amd64" \
+            "docker://${image}:${GITHUB_SHA}-amd64"
+          podman push "localhost/${{ matrix.binary }}:build-arm64" \
+            "docker://${image}:${GITHUB_SHA}-arm64"
+
+          manifest="localhost/${{ matrix.binary }}:manifest"
+          podman manifest create "${manifest}"
+          podman manifest add "${manifest}" "docker://${image}:${GITHUB_SHA}-amd64"
+          podman manifest add "${manifest}" "docker://${image}:${GITHUB_SHA}-arm64"
+          podman manifest push --all --digestfile manifest.digest \
+            "${manifest}" "docker://${image}:${GITHUB_SHA}"
+
+          tags=()
+          if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            tags+=(main)
+          else
+            version="${GITHUB_REF_NAME#v}"
+            tags+=("${version}")
+            if [[ "${version}" != *-* ]]; then
+              tags+=("${version%.*}")
+            fi
+          fi
+          for tag in "${tags[@]}"; do
+            podman manifest push --all "${manifest}" "docker://${image}:${tag}"
+          done
+
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "digest=$(<manifest.digest)" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR for attestation
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest published manifest
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true

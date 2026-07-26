@@ -1,0 +1,61 @@
+version: 2
+
+project_name: openshell-drivers-contrib
+
+builds:
+  - id: openshell-driver-ec2
+    main: ./cmd/openshell-driver-ec2
+    binary: openshell-driver-ec2
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/rsturla/openshell-drivers-contrib/drivers/ec2.DriverVersion={{.Version}}
+    flags:
+      - -trimpath
+
+  - id: openshell-driver-kubevirt
+    main: ./cmd/openshell-driver-kubevirt
+    binary: openshell-driver-kubevirt
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/rsturla/openshell-drivers-contrib/drivers/kubevirt.DriverVersion={{.Version}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: openshell-driver-ec2
+    ids: [openshell-driver-ec2]
+    formats: [tar.gz]
+    name_template: "openshell-driver-ec2_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: openshell-driver-kubevirt
+    ids: [openshell-driver-kubevirt]
+    formats: [tar.gz]
+    name_template: "openshell-driver-kubevirt_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+sboms:
+  - artifacts: archive
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"

@@ -1,0 +1,22 @@
+ARG GO_IMAGE=registry.access.redhat.com/hi/go:1.26
+ARG GO_IMAGE_DIGEST=sha256:c14bd212633a5c713f6456fcb6e63142b01d5091b0d546231c1a61ee99d04e68
+ARG STATIC_IMAGE=registry.access.redhat.com/hi/static:latest
+ARG STATIC_IMAGE_DIGEST=sha256:e03890505b412c81de20ba8719dbe6eda47096f88d3451b2b42b3f7535ecccf7
+FROM ${GO_IMAGE}@${GO_IMAGE_DIGEST} AS builder
+
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG VERSION=devel
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN test -n "${TARGETARCH}" && \
+    CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build \
+    -trimpath \
+    -ldflags "-s -w -X github.com/rsturla/openshell-drivers-contrib/drivers/ec2.DriverVersion=${VERSION}" \
+    -o /openshell-driver-ec2 ./cmd/openshell-driver-ec2
+
+FROM ${STATIC_IMAGE}@${STATIC_IMAGE_DIGEST}
+COPY --from=builder /openshell-driver-ec2 /openshell-driver-ec2
+ENTRYPOINT ["/openshell-driver-ec2"]

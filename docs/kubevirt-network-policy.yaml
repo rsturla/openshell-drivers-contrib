@@ -1,0 +1,36 @@
+# Reference egress policy for KubeVirt launcher pods. Adjust gateway labels and
+# ports to the deployment, and validate live migration requirements with the CNI.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openshell-vm-egress
+  namespace: openshell
+spec:
+  podSelector:
+    matchLabels:
+      kubevirt.io: virt-launcher
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshell-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openshell-gateway
+      ports:
+        - protocol: TCP
+          port: 8080

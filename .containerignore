@@ -1,0 +1,9 @@
+.git
+.github
+.env
+.env.*
+bin
+dist
+*.out
+*.test
+REVIEW_PROMPT.md

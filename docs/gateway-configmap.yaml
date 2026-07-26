@@ -1,0 +1,37 @@
+# Reference gateway ConfigMap. Mount openshell-server-tls at
+# /etc/openshell/tls/server, the client CA certificate at
+# /etc/openshell/tls/client, and openshell-jwt-keys at /etc/openshell-jwt before
+# using this configuration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openshell-gateway-config
+  namespace: openshell-system
+data:
+  gateway.toml: |
+    [openshell]
+    version = 1
+
+    [openshell.gateway]
+    bind_address = "0.0.0.0:8080"
+    health_bind_address = "0.0.0.0:8081"
+    disable_tls = false
+
+    [openshell.gateway.tls]
+    cert_path = "/etc/openshell/tls/server/tls.crt"
+    key_path = "/etc/openshell/tls/server/tls.key"
+    client_ca_path = "/etc/openshell/tls/client/ca.crt"
+    require_client_auth = true
+
+    [openshell.gateway.auth]
+    allow_unauthenticated_users = false
+
+    [openshell.gateway.gateway_jwt]
+    signing_key_path = "/etc/openshell-jwt/signing.pem"
+    public_key_path = "/etc/openshell-jwt/public.pem"
+    kid_path = "/etc/openshell-jwt/kid"
+    gateway_id = "openshell-production"
+    # Static VM token files cannot re-bootstrap after the original token
+    # expires. Keep this above the driver's maximum instance age until a
+    # platform-identity exchange is available. This value covers the 8h default.
+    ttl_secs = 32400

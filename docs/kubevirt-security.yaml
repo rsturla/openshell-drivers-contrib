@@ -1,0 +1,133 @@
+# Reference policy for a dedicated OpenShell VM namespace. Adjust the
+# ServiceAccount subject and gateway labels to the deployment, then validate the
+# NetworkPolicy against the cluster CNI and KubeVirt migration requirements.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshell
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openshell-kubevirt-driver
+  namespace: openshell
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "update", "delete"]
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachines"]
+    verbs: ["create", "get", "list", "update", "patch", "delete"]
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances"]
+    verbs: ["get", "list"]
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datavolumes"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshell-kubevirt-driver
+  namespace: openshell
+subjects:
+  - kind: ServiceAccount
+    name: openshell-driver-kubevirt
+    namespace: openshell-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openshell-kubevirt-driver
+---
+# The boot-source namespace needs a separate read-only binding for its
+# DataSource. Prefer resourceNames in the deployed version of this Role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openshell-kubevirt-boot-source-reader
+  namespace: openshift-virtualization-os-images
+rules:
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datasources"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshell-kubevirt-boot-source-reader
+  namespace: openshift-virtualization-os-images
+subjects:
+  - kind: ServiceAccount
+    name: openshell-driver-kubevirt
+    namespace: openshell-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openshell-kubevirt-boot-source-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openshell-kubevirt-prerequisites
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get"]
+  - apiGroups: ["instancetype.kubevirt.io"]
+    resources:
+      - virtualmachineclusterinstancetypes
+      - virtualmachineclusterpreferences
+    verbs: ["get"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openshell-kubevirt-prerequisites
+subjects:
+  - kind: ServiceAccount
+    name: openshell-driver-kubevirt
+    namespace: openshell-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openshell-kubevirt-prerequisites
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openshell-vm-egress
+  namespace: openshell
+spec:
+  podSelector:
+    matchLabels:
+      kubevirt.io: virt-launcher
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              openshell.io/gateway-namespace: "true"
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openshell-gateway
+      ports:
+        - protocol: TCP
+          port: 8080

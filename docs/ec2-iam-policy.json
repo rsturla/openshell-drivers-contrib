@@ -1,0 +1,70 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeManagedInstances",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeInstances",
+      "Resource": "*"
+    },
+    {
+      "Sid": "LaunchTaggedSandboxes",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_AMI_OWNER:image/REPLACE_AMI_ID",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:subnet/REPLACE_SUBNET_ID",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:security-group/REPLACE_SECURITY_GROUP_ID",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:key-pair/*",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:instance/*",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:volume/*",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:network-interface/*",
+        "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:spot-instances-request/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/openshell.io/gateway-id": "REPLACE_WITH_GATEWAY_ID"
+        },
+        "StringLike": {
+          "ec2:InstanceType": [
+            "c7i.*",
+            "m7i.*",
+            "r7i.*"
+          ]
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "Name",
+            "openshell.io/sandbox-id",
+            "openshell.io/sandbox-name",
+            "openshell.io/namespace",
+            "openshell.io/gateway-id",
+            "openshell.io/workspace",
+            "openshell.io/created-at",
+            "openshell.io/max-lifetime"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "StopOrTerminateOnlyThisGatewaysInstances",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:StopInstances",
+        "ec2:TerminateInstances"
+      ],
+      "Resource": "arn:aws:ec2:REPLACE_REGION:REPLACE_ACCOUNT_ID:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/openshell.io/gateway-id": "REPLACE_WITH_GATEWAY_ID"
+        }
+      }
+    },
+    {
+      "Sid": "NeverPassAnInstanceRole",
+      "Effect": "Deny",
+      "Action": "iam:PassRole",
+      "Resource": "*"
+    }
+  ]
+}
